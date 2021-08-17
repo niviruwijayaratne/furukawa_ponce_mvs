@@ -31,8 +31,8 @@ def read_camera_params(image_dir):
         cam_matrices[i]['R'] = R
         cam_matrices[i]['T'] = T
         cam_matrices[i]['P'] = K.dot(np.hstack([R, T]))
-        print(float(lat_lon[0]) > 0)
         cam_matrices[i]['rot_angle'] = cv2.ROTATE_90_COUNTERCLOCKWISE if float(lat_lon[0]) < 0 else cv2.ROTATE_90_CLOCKWISE
+        
     return cam_matrices
 
 def skew_symmetric(vec):

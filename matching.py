@@ -6,6 +6,7 @@ import sys
 
 IMAGE_CLASS = 'temple'
 IMAGE_DIR = os.path.join("data", IMAGE_CLASS)
+VIS_DIR = 'visualizations'
 
 class Matcher:
     def __init__(self):
@@ -74,7 +75,7 @@ class Matcher:
 
         return dog
         
-    def filter_responses(self, im: np.ndarray, harris: np.ndarray, dog: np.ndarray, visualize:bool = False) -> dict:
+    def filter_responses(self, im: np.ndarray, harris: np.ndarray, dog: np.ndarray, **kwargs) -> dict:
         '''
         Returns dictionary: keys = ['harris', 'dog'], values = coordinates (x, y) of respective detected features
             Input: H x W x N original image, H x W x 1 harris feature image, H x W x 1 dog feature image, 
@@ -95,26 +96,39 @@ class Matcher:
 
                 if not harris is None:
                     harris_window = harris[y: y + dimy, x: x + dimx].flatten()
-                    max_harris = np.apply_along_axis(get_coords, 0, get_max(harris_window), global_coords, dims)
+                    if not np.sum(harris_window) == 0:   
+                        max_harris = np.apply_along_axis(get_coords, 0, get_max(harris_window), global_coords, dims)
+                        max_responses['harris'].append(max_harris)
+
                 if not dog is None:
                     dog_window = dog[y: y + dimy, x: x + dimx].flatten()
-                    max_dog = np.apply_along_axis(get_coords, 0, get_max(dog_window), global_coords, dims)
-                
-                max_responses['harris'].append(max_harris)
-                max_responses['dog'].append(max_dog)
-                if visualize:
+                    if not np.sum(dog_window) == 0:
+                        max_dog = np.apply_along_axis(get_coords, 0, get_max(dog_window), global_coords, dims)
+                        max_responses['dog'].append(max_dog)
+
+                if 'visualize' in kwargs:
                     cv2.rectangle(im, (x, y), (x + dimx, y + dimy), (0, 255, 0), 1)
-                    if not dog is None:
+                    if not dog is None and not np.sum(dog_window) == 0:
                         for yc, xc in zip(max_dog[0], max_dog[1]):
-                            cv2.circle(im, (xc, yc), 2, [255, 0, 0], -1)
-                    if not harris is None:
+                            cv2.circle(im, (xc, yc), 3, [255, 0, 0], -1)
+                    if not harris is None and not np.sum(harris_window) == 0:
                         for yc, xc in zip(max_harris[0], max_harris[1]):
-                            cv2.circle(im, (xc, yc), 2, [0, 0, 255], -1)
-        if visualize:
-            cv2.imshow('harris', harris)
-            cv2.imshow('dog', dog)
-            cv2.imshow('original', im)
+                            cv2.circle(im, (xc, yc), 3, [0, 0, 255], -1)
+
+        if 'visualize' in kwargs:
+            cv2.imshow('harris', cv2.rotate(harris, self.camera_params[kwargs['idx']]['rot_angle']))
+            cv2.imshow('dog', cv2.rotate(dog, self.camera_params[kwargs['idx']]['rot_angle']))
+            cv2.imshow('original', cv2.rotate(im, self.camera_params[kwargs['idx']]['rot_angle']))
             cv2.waitKey(0)
+
+        if 'write' in kwargs:
+            cv2.imwrite(os.path.join(VIS_DIR, IMAGE_CLASS, 'harris_features_' + str(kwargs['idx']) + ".png"), \
+                cv2.rotate(harris, self.camera_params[kwargs['idx']]['rot_angle']))
+            cv2.imwrite(os.path.join(VIS_DIR, IMAGE_CLASS, 'dog_features_' + str(kwargs['idx']) + ".png"), \
+                cv2.rotate(dog, self.camera_params[kwargs['idx']]['rot_angle']))
+            cv2.imwrite(os.path.join(VIS_DIR, IMAGE_CLASS, 'max_responses_' + str(kwargs['idx']) + ".png"), \
+                cv2.rotate(im, self.camera_params[kwargs['idx']]['rot_angle']))
+
         
         if not harris is None:
             max_harris_responses = np.array(max_responses['harris'])
@@ -124,17 +138,12 @@ class Matcher:
             max_dog_responses = np.array(max_responses['dog'])
             max_responses['dog'] = hlp.reshape_max_responses(max_dog_responses) #x, y
 
-        return max_responses
+        return max_responses #x, y
 
     def get_fundamental_matrix(self, image_indices):
         '''
         Returns fundamental matrix between image_indices using given camera matrices
         '''
-        ims = os.listdir(IMAGE_DIR)
-        ims = sorted(list(filter(lambda x: x.endswith(".png"), ims)))
-        im1, im2 = cv2.imread(os.path.join(IMAGE_DIR, ims[image_indices[0]])), cv2.imread(os.path.join(IMAGE_DIR, ims[image_indices[1]]))
-        im1 = cv2.rotate(im1, self.camera_params[image_indices[0]]['rot_angle'])
-        im2 = cv2.rotate(im1, self.camera_params[image_indices[1]]['rot_angle'])
 
         P1 = self.camera_params[image_indices[0]]['P']
         P2 = self.camera_params[image_indices[1]]['P']
@@ -176,7 +185,7 @@ class Matcher:
 
         return corresp_feature
 
-    def epipolar_correspondence(self, point, base_im_idx):
+    def epipolar_correspondence(self, points, base_im_idx):
         '''
         Given a feature (either harris or dog) in image with index base_im_idx, returns dictionary 
         of features (of same type of given feature): key = image index, value = all features
@@ -184,28 +193,25 @@ class Matcher:
         '''
         ims = os.listdir(IMAGE_DIR)
         ims = sorted(list(filter(lambda x: x.endswith(".png"), ims)))
-        base_im = cv2.rotate(cv2.imread(os.path.join(IMAGE_DIR, ims[base_im_idx])), self.camera_params[base_im_idx]['rot_angle'])
+        base_im = cv2.imread(os.path.join(IMAGE_DIR, ims[base_im_idx]))
         num_ims = len(ims)
         other_im_idxs = list(range(0, base_im_idx))
         other_im_idxs.extend(list(range(base_im_idx + 1, num_ims)))
 
         features = {}
-        for idx in other_im_idxs[-2: ]:
-            im = cv2.rotate(cv2.imread(os.path.join(IMAGE_DIR, ims[idx])), self.camera_params[idx]['rot_angle'])
+        for idx in other_im_idxs:
+            im = cv2.imread(os.path.join(IMAGE_DIR, ims[idx]))
             harris_responses = self.get_harris_response(im)
             dog_responses = self.get_dog_response(im)
-            max_responses = self.filter_responses(im, harris_responses, dog_responses, False)
+            max_responses = self.filter_responses(im, harris_responses, dog_responses)
             harris_points = np.hstack([max_responses['harris'], np.ones_like(max_responses['harris'][:, 0]).reshape(-1, 1)]).reshape(-1, 3)
             F = self.get_fundamental_matrix([base_im_idx, idx])
-            homog_point = np.squeeze(np.vstack([np.array(point).reshape(-1, 1), [1]])) 
-            l = F.dot(homog_point).reshape(-1, 1)
-            distances = harris_points.dot(l)/(np.linalg.norm(harris_points[:, :-1], axis=1).reshape(-1, 1))
-            epipolar_consistent = harris_points[:, :-1][np.where(np.abs(distances) <= 2)[0]] #x, y
-            features[idx] = [epipolar_consistent]
+            for point in points:
+                homog_point = np.squeeze(np.vstack([np.array(point).reshape(-1, 1), [1]])) 
+                l = F.dot(homog_point).reshape(-1, 1)
+                distances = harris_points.dot(l)/(np.linalg.norm(harris_points[:, :-1], axis=1).reshape(-1, 1))
+                epipolar_consistent = harris_points[:, :-1][np.where(np.abs(distances) <= 2)[0]] #x, y
+                features[idx] = [epipolar_consistent]
         
         return features # x, y
-
-
-
-
 
