@@ -4,7 +4,7 @@ Implementation of "Accurate, Dense, and Robust Multi-View Stereopsis" from CVPR 
 
 ### Matching Algorithm
 **Currently Implemented** <br>
-- Harris (Left) and DOG (Middle) Feature Detection. After detecting Harris and DOG features in image, 32px x 32px grid overlayed onto image and top 4 highest responses of each feature type are kept (Right), Harris = Red, DOG = Blue. <br><br>
+- Harris (First) and DOG (Second) Feature Detection. After detecting Harris and DOG features in image, 32px x 32px grid overlayed onto image and top 4 highest responses of each feature type are kept (Third), Harris = Red, DOG = Blue. <br><br>
 <img src=visualizations/temple/harris_features_0.png height=400>&nbsp;&nbsp;&nbsp;
 <img src=visualizations/temple/dog_features_0.png height=400>&nbsp;&nbsp;&nbsp;
 <img src=visualizations/temple/max_responses_0.png height=400>&nbsp;&nbsp;&nbsp;
