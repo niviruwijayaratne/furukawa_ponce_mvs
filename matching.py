@@ -4,6 +4,8 @@ import os
 import helpers as hlp
 import sys
 
+from patch import Patch
+
 IMAGE_CLASS = 'temple'
 IMAGE_DIR = os.path.join("data", IMAGE_CLASS)
 VIS_DIR = 'visualizations'
@@ -185,7 +187,7 @@ class Matcher:
 
         return corresp_feature
 
-    def epipolar_correspondence(self, points, base_im_idx):
+    def epipolar_correspondence(self, point, base_im_idx):
         '''
         Given a feature (either harris or dog) in image with index base_im_idx, returns dictionary 
         of features (of same type of given feature): key = image index, value = all features
@@ -200,18 +202,74 @@ class Matcher:
 
         features = {}
         for idx in other_im_idxs:
+            if idx == 10:
+                features[idx] = []
+                continue
             im = cv2.imread(os.path.join(IMAGE_DIR, ims[idx]))
             harris_responses = self.get_harris_response(im)
             dog_responses = self.get_dog_response(im)
             max_responses = self.filter_responses(im, harris_responses, dog_responses)
             harris_points = np.hstack([max_responses['harris'], np.ones_like(max_responses['harris'][:, 0]).reshape(-1, 1)]).reshape(-1, 3)
             F = self.get_fundamental_matrix([base_im_idx, idx])
-            for point in points:
-                homog_point = np.squeeze(np.vstack([np.array(point).reshape(-1, 1), [1]])) 
-                l = F.dot(homog_point).reshape(-1, 1)
-                distances = harris_points.dot(l)/(np.linalg.norm(harris_points[:, :-1], axis=1).reshape(-1, 1))
-                epipolar_consistent = harris_points[:, :-1][np.where(np.abs(distances) <= 2)[0]] #x, y
-                features[idx] = [epipolar_consistent]
-        
+            homog_point = np.squeeze(np.vstack([np.array(point).reshape(-1, 1), [1]])) 
+            l = F.dot(homog_point).reshape(-1, 1)
+            distances = harris_points.dot(l)/(np.linalg.norm(harris_points[:, :-1], axis=1).reshape(-1, 1))
+            epipolar_consistent = harris_points[:, :-1][np.where(np.abs(distances) <= 2)[0]] #x, y
+            features[idx] = np.squeeze(epipolar_consistent)
         return features # x, y
+
+    def match(self, visualize=False):
+        ims = os.listdir(IMAGE_DIR)
+        ims = sorted(list(filter(lambda x: x.endswith(".png"), ims)))
+        max_responses = {}
+        feature_types = ['harris', 'dog']
+        patches = {}
+        for idx, fname in enumerate(ims): 
+            patches[idx] = []
+            other_im_idxs = list(range(0, idx))
+            other_im_idxs.extend(list(range(idx + 1, len(ims))))
+
+            im = cv2.imread(os.path.join(IMAGE_DIR, fname))
+            harris_responses = self.get_harris_response(im)
+            dog_responses = self.get_dog_response(im)
+            max_responses[idx] = self.filter_responses(im, harris_responses, dog_responses)
+            
+            matched_features = {}
+            matched_features[idx] = {}
+
+            for i, point in enumerate(max_responses[idx]['harris']): #x, y
+                epipolar_features = self.epipolar_correspondence(point, idx)
+                key_list = [k for k, vals in epipolar_features.items() for v in vals]
+                value_list = [list(v) for k, vals in epipolar_features.items() for v in vals]
+                triangulated_distances = []
+                
+                f1 = np.vstack([point.reshape(-1, 1), [1]])
+                P1 = self.camera_params[idx]['P']
+
+                for im_idx, feature_list in epipolar_features.items():
+                    print("HERE", im_idx)
+                    for feature in feature_list:
+                        f2 = np.vstack([np.array(feature).reshape(-1, 1), [1]]) #x, y
+                        P2 = self.camera_params[im_idx]['P']
+                        triangulated_distance = self.triangulate_points(f1, f2, P1, P2)
+                        triangulated_distances.append(triangulated_distance)
+
+                sorted_keys = [key for _, key in sorted(zip(triangulated_distances, key_list))]
+                sorted_values = [val for _, val in sorted(zip(triangulated_distances, value_list))]
+                sorted_triangulated_distances = sorted(triangulated_distances)
+
+    def triangulate_points(self, p1, p2, P1, P2):
+        A = np.zeros((4, 4))
+        A[0, :] = p1[0]*P1[-1, :] - P1[0, :]
+        A[1, :] = p1[1]*P1[-1, :] - P1[1, :]
+        A[2, :] = p2[0]*P2[-1, :] - P2[0, :]
+        A[3, :] = p2[1]*P2[-1, :] - P2[1, :]
+
+        U, S, V_t = np.linalg.svd(A)
+        P = V_t[-1]
+        
+        U, S, V_t = np.linalg.svd(P1)
+        O = V_t[-1]
+
+        return np.linalg.norm(P - O)
 
